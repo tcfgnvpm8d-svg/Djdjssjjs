@@ -35,11 +35,11 @@ async def on_message(message):
 
     original_text = message.content
 
-    # Only repost messages containing selected swear words
+    # Only process messages containing a selected swear word
     if not any(word in original_text.lower() for word in BAD_WORDS):
         return
 
-    # Add a mention of the person being replied to
+    # Mention the person whose message is being replied to
     if message.reference and message.reference.message_id:
         try:
             replied_message = message.reference.resolved
@@ -67,17 +67,17 @@ async def on_message(message):
         avatar_url = message.author.display_avatar.url
         avatar_bytes = await message.author.display_avatar.read()
 
-        # Create a temporary webhook to repost the message
+        # Create a webhook using the original author's name and avatar
         webhook = await message.channel.create_webhook(
             name=username,
             avatar=avatar_bytes,
-            reason="Temporary message repost"
+            reason="Filtered message repost"
         )
 
         # Delete the original message
         await message.delete()
 
-        # Repost using the author's display name and avatar
+        # Repost under the author's name and profile picture
         await webhook.send(
             content=original_text,
             username=username,
@@ -90,7 +90,7 @@ async def on_message(message):
         print(f"Reposted message from {username}")
 
     except discord.Forbidden:
-        print("Missing Discord channel permissions.")
+        print("Missing Manage Messages or Manage Webhooks permission.")
 
     except discord.HTTPException as error:
         print(f"Discord API error: {error}")
