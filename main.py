@@ -1,21 +1,47 @@
 
 import os
+import re
 import discord
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 
 BAD_WORDS = [
-    "fuck",
-    "shit",
-    "bitch",
-    "asshole",
-    "bastard",
-    "cunt",
-    "nigger",
-    "nigga",
-    "faggot",
-    "fag"
+    # Profanity
+    "fuck", "fucking", "fucked", "fucker", "fuckers",
+    "shit", "shitty", "bullshit", "horseshit",
+    "bitch", "bitches", "bitchy",
+    "asshole", "assholes", "arsehole", "arseholes",
+    "bastard", "bastards", "cunt", "cunts",
+    "motherfucker", "motherfuckers",
+    "dick", "dickhead", "dicks",
+    "cock", "cocksucker",
+    "piss", "pissed", "piss off",
+    "damn", "dammit", "goddamn",
+    "prick", "pricks", "wanker", "wankers",
+    "twat", "twats", "bollocks", "bugger",
+    "slut", "sluts", "whore", "whores",
+    "skank", "skanks", "dumbass", "jackass",
+    "dipshit", "shithead", "dumbfuck", "fuckwit",
+
+    # Discriminatory slurs
+    "nigger", "nigga", "faggot", "fag",
+    "retard", "retarded", "kike", "spic",
+    "chink", "wetback", "tranny",
+
+    # Other insults
+    "idiot", "moron"
 ]
+
+# Match complete words or phrases, ignoring capitalization
+BAD_WORDS_PATTERN = re.compile(
+    r"(?<!\w)(?:" +
+    "|".join(
+        re.escape(word).replace(r"\ ", r"\s+")
+        for word in sorted(BAD_WORDS, key=len, reverse=True)
+    ) +
+    r")(?!\w)",
+    re.IGNORECASE
+)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -25,7 +51,7 @@ bot = discord.Client(intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f"Bot online: {bot.user}")
+    print(f"Bot online as {bot.user}")
 
 
 @bot.event
@@ -35,39 +61,38 @@ async def on_message(message):
 
     original_text = message.content
 
-    # Only process messages containing a selected swear word
-    if not any(word in original_text.lower() for word in BAD_WORDS):
+    # Check for a whole-word match
+    if not BAD_WORDS_PATTERN.search(original_text):
         return
-
-    # Mention the person whose message is being replied to
-    if message.reference and message.reference.message_id:
-        try:
-            replied_message = message.reference.resolved
-
-            if replied_message is None:
-                replied_message = await message.channel.fetch_message(
-                    message.reference.message_id
-                )
-
-            if replied_message:
-                mention = replied_message.author.mention
-                original_text = f"{mention} {original_text}"
-
-        except (
-            discord.NotFound,
-            discord.Forbidden,
-            discord.HTTPException
-        ):
-            pass
 
     webhook = None
 
     try:
         username = message.author.display_name
         avatar_url = message.author.display_avatar.url
+
+        # Mention the person being replied to
+        if message.reference and message.reference.message_id:
+            try:
+                replied_message = message.reference.resolved
+
+                if replied_message is None:
+                    replied_message = await message.channel.fetch_message(
+                        message.reference.message_id
+                    )
+
+                if replied_message:
+                    original_text = (
+                        f"{replied_message.author.mention} {original_text}"
+                    )
+
+            except discord.HTTPException as error:
+                print(f"Could not fetch reply: {error}")
+
+        # Get the author's profile picture
         avatar_bytes = await message.author.display_avatar.read()
 
-        # Create a webhook using the original author's name and avatar
+        # Create a temporary webhook
         webhook = await message.channel.create_webhook(
             name=username,
             avatar=avatar_bytes,
@@ -77,7 +102,7 @@ async def on_message(message):
         # Delete the original message
         await message.delete()
 
-        # Repost under the author's name and profile picture
+        # Repost through the webhook
         await webhook.send(
             content=original_text,
             username=username,
@@ -87,10 +112,13 @@ async def on_message(message):
             )
         )
 
-        print(f"Reposted message from {username}")
+        print(f"Webhook repost sent as {username}")
 
     except discord.Forbidden:
-        print("Missing Manage Messages or Manage Webhooks permission.")
+        print(
+            "Permission error: the bot needs "
+            "Manage Messages and Manage Webhooks."
+        )
 
     except discord.HTTPException as error:
         print(f"Discord API error: {error}")
