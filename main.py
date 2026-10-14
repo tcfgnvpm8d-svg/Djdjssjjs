@@ -2,6 +2,7 @@
 import os
 import re
 import discord
+import aiohttp
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 
@@ -32,7 +33,6 @@ BAD_WORDS = [
     "idiot", "moron"
 ]
 
-# Match complete words or phrases, ignoring capitalization
 BAD_WORDS_PATTERN = re.compile(
     r"(?<!\w)(?:" +
     "|".join(
@@ -61,17 +61,19 @@ async def on_message(message):
 
     original_text = message.content
 
-    # Check for a whole-word match
+    # Only process messages containing a filtered word
     if not BAD_WORDS_PATTERN.search(original_text):
         return
 
     webhook = None
+    files = []
+    attachment_links = []
 
     try:
         username = message.author.display_name
         avatar_url = message.author.display_avatar.url
 
-        # Mention the person being replied to
+        # Add a mention of the person being replied to
         if message.reference and message.reference.message_id:
             try:
                 replied_message = message.reference.resolved
@@ -83,33 +85,52 @@ async def on_message(message):
 
                 if replied_message:
                     original_text = (
-                        f"{replied_message.author.mention} {original_text}"
+                        f"{replied_message.author.mention} "
+                        f"{original_text}"
                     )
 
             except discord.HTTPException as error:
                 print(f"Could not fetch reply: {error}")
 
-        # Get the author's profile picture
+        # Download each attachment before deleting the original
+        for attachment in message.attachments:
+            try:
+                data = await attachment.read()
+                files.append(
+                    discord.File(
+                        fp=__import__("io").BytesIO(data),
+                        filename=attachment.filename
+                    )
+                )
+            except (discord.HTTPException, discord.NotFound):
+                attachment_links.append(attachment.url)
+
+        # Include embeds such as linked videos where possible
+        # Discord attachments are handled above.
+        if attachment_links:
+            original_text += "\n\nAttachment links:\n" + "\n".join(
+                attachment_links
+            )
+
+        # Create a webhook using the author's profile
         avatar_bytes = await message.author.display_avatar.read()
 
-        # Create a temporary webhook
         webhook = await message.channel.create_webhook(
             name=username,
             avatar=avatar_bytes,
             reason="Filtered message repost"
         )
 
-        # Delete the original message
+        # Delete original only after downloading its attachments
         await message.delete()
 
-        # Repost through the webhook
+        # Send content and media via the webhook
         await webhook.send(
-            content=original_text,
+            content=original_text or None,
             username=username,
             avatar_url=avatar_url,
-            allowed_mentions=discord.AllowedMentions(
-                users=True
-            )
+            files=files,
+            allowed_mentions=discord.AllowedMentions(users=True)
         )
 
         print(f"Webhook repost sent as {username}")
@@ -124,6 +145,11 @@ async def on_message(message):
         print(f"Discord API error: {error}")
 
     finally:
+        # Close downloaded files
+        for file in files:
+            file.close()
+
+        # Remove temporary webhook
         if webhook is not None:
             try:
                 await webhook.delete()
